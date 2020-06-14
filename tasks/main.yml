@@ -1,0 +1,11 @@
+---
+# tasks file for ansible-role-etcd-cluster
+
+- name: install cfssl
+  include_tasks: cfssl.yml
+
+- name: generate keys
+  include_tasks: ca.yml
+
+- name: Deploy etcd
+  include_tasks: etcd.yml

@@ -1,0 +1,162 @@
+---
+- name: Gather instance facts
+  setup:
+  delegate_to: "{{ item }}"
+  delegate_facts: True
+  loop: "{{ groups[ca_etcd_nodes_group] }}"
+
+- name: Generate list of IP addresses and hostnames needed for etcd certificate
+  set_fact:
+    etcdHosts: >-
+      {% set comma = joiner(",") %}{% for item in groups[ca_etcd_nodes_group] -%}
+        {{ comma() }}{{ hostvars[item].ansible_default_ipv4.address }}{{ comma() }}{{ hostvars[item]["ansible_"+etcd_interface].ipv4.address }}{{ comma() }}{{ item }}{{ comma() }}{{ hostvars[item]["ansible_hostname"] }}
+      {%- endfor %}{% for item in etcd_cert_hosts -%}
+        {{ comma() }}{{ item }}
+      {%- endfor %}
+  tags:
+    - kubernetes-ca
+    - kubernetes-ca-etcd
+
+- name: Output of hostnames/IPs used for etcd certificate
+  debug: var=etcdHosts
+  tags:
+    - kubernetes-ca
+    - kubernetes-ca-etcd
+
+- name: Create etcd CA configuration directory
+  file:
+    path: "{{ etcd_ca_conf_directory }}"
+    owner: "{{ ca_certificate_owner }}"
+    group: "{{ ca_certificate_group }}"
+    state: directory
+  tags:
+    - kubernetes-ca
+    - kubernetes-ca-etcd
+
+- name: Create etcd CA configuration file
+  template:
+    src: "ca-etcd-config.json.j2"
+    dest: "{{ etcd_ca_conf_directory }}/ca-etcd-config.json"
+    owner: "{{ ca_certificate_owner }}"
+    group: "{{ ca_certificate_group }}"
+    mode: "{{ ca_file_perm }}"
+  when:
+    - ansible_default_ipv4.address == cfssl_generate_node
+  tags:
+    - kubernetes-ca
+    - kubernetes-ca-etcd
+
+- name: Copy the etcd CA certificate request file (CSR)
+  template:
+    src: "ca-etcd-csr.json.j2"
+    dest: "{{ etcd_ca_conf_directory }}/ca-etcd-csr.json"
+    owner: "{{ ca_certificate_owner }}"
+    group: "{{ ca_certificate_group }}"
+    mode: "{{ ca_file_perm }}"
+  when:
+    - ansible_default_ipv4.address == cfssl_generate_node
+  tags:
+    - kubernetes-ca
+    - kubernetes-ca-etcd
+
+- name: Generate the etcd certificate authority (CA) and private key
+  shell: >
+    set -o errexit; \
+    set -o pipefail; \
+    cfssl gencert \
+      -initca ca-etcd-csr.json \
+    | cfssljson -bare ca-etcd
+  args:
+    executable: "/bin/bash"
+    chdir: "{{ etcd_ca_conf_directory }}"
+    creates: "{{ etcd_ca_conf_directory }}/ca-etcd-key.pem"
+  when:
+    - ansible_default_ipv4.address == cfssl_generate_node
+  tags:
+    - kubernetes-ca
+    - kubernetes-ca-etcd
+
+- name: Set file permissions for etcd CA and private key file
+  file:
+    path: "{{ etcd_ca_conf_directory }}/{{ item }}"
+    owner: "{{ ca_certificate_owner }}"
+    group: "{{ ca_certificate_group }}"
+    mode: '{{ ca_file_perm }}'
+    modification_time: "preserve"
+    access_time: "preserve"
+  when:
+    - ansible_default_ipv4.address == cfssl_generate_node
+  loop:
+    - ca-etcd.pem
+    - ca-etcd-key.pem
+    - ca-etcd.csr
+
+- name: Create the etcd key CSR file
+  template:
+    src: "cert-etcd-csr.json.j2"
+    dest: "{{ etcd_ca_conf_directory }}/cert-etcd-csr.json"
+    owner: "{{ ca_certificate_owner }}"
+    group: "{{ ca_certificate_group }}"
+    mode: "{{ ca_file_perm }}"
+  when:
+    - ansible_default_ipv4.address == cfssl_generate_node
+  tags:
+    - kubernetes-ca
+    - kubernetes-ca-etcd
+
+- name: Generate TLS certificate for etcd
+  shell: >
+    set -o errexit; \
+    set -o pipefail; \
+    cfssl gencert \
+      -ca=ca-etcd.pem \
+      -ca-key=ca-etcd-key.pem \
+      -config=ca-etcd-config.json \
+      -hostname={{ etcdHosts }} \
+      -profile=etcd \
+      cert-etcd-csr.json \
+    | cfssljson -bare cert-etcd
+  args:
+    executable: "/bin/bash"
+    chdir: "{{ etcd_ca_conf_directory }}"
+    creates: "{{ etcd_ca_conf_directory }}/cert-etcd-key.pem"
+  when:
+    - ansible_default_ipv4.address == cfssl_generate_node
+  tags:
+    - kubernetes-ca
+    - kubernetes-ca-etcd
+
+- name: Set file permissions for etcd certificate files
+  file:
+    path: "{{ etcd_ca_conf_directory }}/{{ item }}"
+    owner: "{{ ca_certificate_owner }}"
+    group: "{{ ca_certificate_group }}"
+    mode: '{{ ca_file_perm }}'
+    modification_time: "preserve"
+    access_time: "preserve"
+  when:
+    - ansible_default_ipv4.address == cfssl_generate_node
+  loop:
+    - cert-etcd.pem
+    - cert-etcd-key.pem
+    - cert-etcd.csr
+
+- name: copy ca file from "{{ cfssl_generate_node }}" to localhost
+  fetch: 
+    src: "{{ etcd_ca_conf_directory }}/{{ item }}"
+    dest: "/tmp/{{ item }}"
+    flat: yes
+  loop: "{{ etcd_certificates }}"
+  when:
+    - ansible_default_ipv4.address == cfssl_generate_node
+
+- name: copy ca file from localhost to Other hosts
+  copy:
+    src: "/tmp/{{ item }}"
+    dest: "{{ etcd_ca_conf_directory }}/{{ item }}"
+    group: "{{ ca_certificate_group }}"
+    owner: "{{ ca_certificate_owner }}"
+    mode: '{{ ca_file_perm }}'
+  loop: "{{ etcd_certificates }}"
+  when:
+    - ansible_default_ipv4.address != cfssl_generate_node

@@ -1,0 +1,126 @@
+---
+# defaults file for ansible-role-etcd-cluster
+
+# Specifies the version of CFSSL toolkit we want to download and use
+cfssl_version: "1.4.1"
+# Checksum file
+cfssl_checksum_url: "https://github.com/cloudflare/cfssl/releases/download/v{{ cfssl_version }}/cfssl_{{ cfssl_version }}_checksums.txt"
+# The directory where CFSSL binaries will be installed
+cfssl_bin_directory: "/usr/local/bin"
+# Owner of the cfssl binaries
+cfssl_owner: "root"
+# Group of cfssl binaries
+cfssl_group: "root"
+# Operarting system on which "cfssl/cfssljson" should run on
+cfssl_os: "linux" # use "darwin" for MacOS X, "windows" for Windows
+# Processor architecture "cfssl/cfssljson" should run on
+cfssl_arch: "amd64" # the only supported architecture at the moment
+# Select the first node in the cluster to install cfssl
+cfssl_generate_node: "{{ hostvars[ groups[ca_etcd_nodes_group][0] ].ansible_default_ipv4.address }}"
+
+
+# Directory permissions for directory specified in "etcd_ca_conf_directory"
+etcd_ca_conf_directory_perm: "0770"
+# File permissions for certificates, csr, and so on
+ca_file_perm: "0660"
+# Owner of the certificate files
+ca_certificate_owner: "root"
+# Group to which the certificate files belongs to
+ca_certificate_group: "root"
+
+# Specifies Ansible's hosts group which contains all K8s controller
+# nodes (as specified in Ansible's "hosts" file).
+# As above but for the K8s etcd nodes.
+ca_etcd_nodes_group: "etcd"
+
+# Expiry for etcd root certificate
+ca_etcd_expiry: "87600h"
+
+# Certificate authority for etcd certificates
+ca_etcd_csr_cn: "Etcd"
+ca_etcd_csr_key_algo: "rsa"
+ca_etcd_csr_key_size: "2048"
+ca_etcd_csr_names_c: "CN"
+ca_etcd_csr_names_l: "Rancher"
+ca_etcd_csr_names_o: "k3s"
+ca_etcd_csr_names_ou: "BY"
+ca_etcd_csr_names_st: "Keju"
+
+# CSR parameter for etcd certificate
+etcd_csr_cn: "Etcd"
+etcd_csr_key_algo: "rsa"
+etcd_csr_key_size: "2048"
+etcd_csr_names_c: "CN"
+etcd_csr_names_l: "Rancher"
+etcd_csr_names_o: "k3s"
+etcd_csr_names_ou: "BY"
+etcd_csr_names_st: "Keju"
+
+etcd_cert_hosts:
+  - 127.0.0.1
+  - etcd1
+  - etcd2
+  - etcd3
+
+
+# The directory from where to copy the etcd certificates. By default this
+# will expand to user's LOCAL $HOME (the user that run's "ansible-playbook ..."
+# plus "/etcd-certificates". That means if the user's $HOME directory is e.g.
+# "/home/da_user" then "etcd_ca_conf_directory" will have a value of
+# "/home/da_user/etcd-certificates".
+etcd_ca_conf_directory: "{{ '/etc/etcd/certificates' | expanduser }}"
+
+# etcd version
+etcd_version: "3.4.7"
+# Port where etcd listening for clients
+etcd_client_port: "2379"
+# Port where etcd is listening for it's peer's
+etcd_peer_port: "2380"
+# Interface to bind etcd ports to
+etcd_interface: "eth0"
+# Directroy for etcd configuration
+etcd_conf_dir: "/etc/etcd"
+# Directory to store downloaded etcd archive
+# Should not be deleted to avoid downloading over and over again
+etcd_download_dir: "/opt/etcd"
+# Directroy to store etcd binaries
+etcd_bin_dir: "/usr/local/bin"
+# etcd data directory (etcd database files so to say)
+etcd_data_dir: "/var/lib/etcd"
+
+etcd_settings:
+  "name": "{{ansible_hostname}}"
+  "cert-file": "{{etcd_conf_dir}}/cert-etcd.pem"
+  "key-file": "{{etcd_conf_dir}}/cert-etcd-key.pem"
+  "peer-cert-file": "{{etcd_conf_dir}}/cert-etcd.pem"
+  "peer-key-file": "{{etcd_conf_dir}}/cert-etcd-key.pem"
+  "peer-trusted-ca-file": "{{etcd_conf_dir}}/ca-etcd.pem"
+  "peer-client-cert-auth": "true" # # Enable peer client cert authentication
+  "client-cert-auth": "true" # Enable client cert authentication
+  "trusted-ca-file": "{{etcd_conf_dir}}/ca-etcd.pem"
+  "advertise-client-urls": "{{'https://' + hostvars[inventory_hostname]['ansible_' + etcd_interface].ipv4.address + ':' + etcd_client_port}}"
+  "initial-advertise-peer-urls": "{{'https://' + hostvars[inventory_hostname]['ansible_' + etcd_interface].ipv4.address + ':' + etcd_peer_port}}"
+  "listen-peer-urls": "{{'https://' + hostvars[inventory_hostname]['ansible_' + etcd_interface].ipv4.address + ':' + etcd_peer_port}}"
+  "listen-client-urls": "{{'https://' + hostvars[inventory_hostname]['ansible_' + etcd_interface].ipv4.address + ':' + etcd_client_port + ',https://127.0.0.1:' + etcd_client_port}}"
+  "initial-cluster-token": "etcd-cluster-0" # Initial cluster token for the etcd cluster during bootstrap.
+  "initial-cluster-state": "new" # Initial cluster state ('new' or 'existing')
+  "data-dir": "{{etcd_data_dir}}" # etcd data directory (etcd database files so to say)
+  "wal-dir": "" # Dedicated wal directory ("" means no seperated WAL directory)
+  "auto-compaction-retention": "0" # Auto compaction retention in hour. 0 means disable auto compaction.
+  "snapshot-count": "100000" # Number of committed transactions to trigger a snapshot to disk
+  "heartbeat-interval": "100" # Time (in milliseconds) of a heartbeat interval
+  "election-timeout": "1000" # Time (in milliseconds) for an election to timeout. See tuning documentation for details
+  "max-snapshots": "5" # Maximum number of snapshot files to retain (0 is unlimited)
+  "max-wals": "5" # Maximum number of wal files to retain (0 is unlimited)
+  "quota-backend-bytes": "0" # Raise alarms when backend size exceeds the given quota (0 defaults to low space quota)
+  "log-package-levels": "" # Specify a particular log level for each etcd package (eg: 'etcdmain=CRITICAL,etcdserver=DEBUG')
+  "logger": "zap" # Specify ‘zap’ for structured logging or ‘capnslog’.
+  "log-outputs": "systemd/journal" # Specify 'stdout' or 'stderr' to skip journald logging even when running under systemd
+  "enable-v2": "true" # enable v2 API to stay compatible with previous etcd 3.3.x (needed for flannel e.g.)
+
+# Certificate authority and certificate files for etcd
+etcd_certificates:
+  - ca-etcd.pem        # client server TLS trusted CA key file/peer server TLS trusted CA file
+  - ca-etcd-key.pem    # CA key file
+  - cert-etcd.pem      # peer server TLS cert file
+  - cert-etcd-key.pem  # peer server TLS key file
